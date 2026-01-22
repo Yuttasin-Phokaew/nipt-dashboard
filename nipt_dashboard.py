@@ -6,19 +6,19 @@ import plotly.express as px
 from google.oauth2.service_account import Credentials
 from gspread.exceptions import WorksheetNotFound, APIError
 import re 
-import json
 
 # --- 1. การตั้งค่าข้อมูลและการเชื่อมต่อ (Configuration) ---
 SPREADSHEET_ID = '1VNblxx_MoETV5eynsIDtx22-y9OvXsYQ-2uFsq62U8M'
 SHEET_NAME = 'DashBoard' 
 CREDENTIALS_FILE = 'google_sheet_credentials.json'
 
-REGIONAL_ORDER_1_13 = [f'เขตสุขภาพที่ {i}' for i in range(1, 14)] # แก้เป็น 14 เพื่อให้ครอบคลุมถึงเขต 13
+REGIONAL_ORDER_1_13 = [f'เขตสุขภาพที่ {i}' for i in range(1, 13)]
 REGIONAL_ORDER_1_13.append('ส่วนกลาง/อื่นๆ')
 
 # --- 2. ฟังก์ชันจัดการข้อมูล (Data Processing) ---
 CHROMOSOME_GROUPS = ['T13', 'T18', 'T21', 'XO', 'XXX', 'XXY', 'XYY']
 NON_CHROMOSOME_GROUPS = ['Low risk', 'Re-sampling', 'Re-library', 'No Call']
+ALL_PRIMARY_GROUPS = CHROMOSOME_GROUPS + NON_CHROMOSOME_GROUPS
 
 def map_risk_category(result):
     result_lower = str(result).lower().strip()
@@ -43,21 +43,20 @@ def clean_and_map_lab_results(result):
     risk_cat = map_risk_category(result_upper)
     if risk_cat in NON_CHROMOSOME_GROUPS:
         return risk_cat
-    return 'Other'
+    return 'Other (Detailed)'
 
 @st.cache_data(ttl=600)
 def load_data():
     try:
-        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        # แทนที่การอ่านไฟล์ด้วยการดึงค่าจาก st.secrets
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = Credentials.from_service_account_info(creds_dict) # ใช้ from_service_account_info แทน
         
-        # ตรวจสอบชื่อใน st.secrets ให้ตรงกับหัวข้อในเมนู Secrets
-        if "gcp_service_account" in st.secrets:
-            creds_info = st.secrets["gcp_service_account"]
-            creds = Credentials.from_service_account_info(creds_info, scopes=scope)
-        else:
-            # สำหรับรันในเครื่องตัวเอง
-            creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
-            
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
         gc = gspread.authorize(creds)
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
         worksheet = spreadsheet.worksheet(SHEET_NAME)
@@ -67,10 +66,11 @@ def load_data():
         df = pd.DataFrame(data)
         df.columns = ['lab_no', 'institute', 'province', 'regional', 'lab_results']
         
-        # ลบช่องว่าง และกรองแถวที่ไม่ต้องการออกเพื่อให้ Dropdown สะอาด
+        # ลบช่องว่าง และกรองแถวที่ไม่สมบูรณ์ออกทันที
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
             
+        # กรองค่าที่เป็นช่องว่าง หรือคำว่า undefined/ไม่พบเขตสุขภาพ ออกจาก Dropdown และกราฟ
         invalid_vals = ['', 'nan', 'None', 'undefined', 'ไม่พบเขตสุขภาพ']
         df = df[~df['regional'].isin(invalid_vals)]
         df = df[~df['lab_results'].isin(invalid_vals)]
@@ -80,7 +80,7 @@ def load_data():
         
         return df
     except Exception as e:
-        st.error(f"❌ การเชื่อมต่อล้มเหลว: {e}")
+        st.error(f"❌ Error: {e}")
         return pd.DataFrame()
 
 def set_styles():
@@ -246,10 +246,8 @@ def main():
 
     # 7.2 กราฟแท่ง (Bar Chart) - แก้ไข Error และลบชื่อแกน
     with col_chart_2:
-        # กำหนดลำดับที่ถูกต้องสำหรับเขตสุขภาพ (1-13)
-        correct_order = [f'เขตสุขภาพที่ {i}' for i in range(1, 14)] + ['ส่วนกลาง/อื่นๆ']
-        
-        # กรองข้อมูลให้สะอาด
+        # สร้าง df_bar_clean เพื่อป้องกัน Error บรรทัด 255
+        # กรองแถวที่ว่าง หรือเป็นค่าที่เราไม่ต้องการออก
         invalid_vals = ['', 'nan', 'None', 'undefined', 'ไม่พบเขตสุขภาพ']
         df_bar_clean = df_filtered[~df_filtered['regional'].isin(invalid_vals)]
         
@@ -257,19 +255,27 @@ def main():
 
         if selected_regional != 'ทั้งหมด':
             st.subheader(f"แยกตามจังหวัด ในเขต {selected_regional}")
+            # กรองให้เหลือเฉพาะจังหวัดที่มีข้อมูลจริง
             df_bar_data = df_bar_clean[df_bar_clean['province'] != ''].groupby(['province', group_col]).size().reset_index(name='จำนวนเคส')
             
-            fig_bar = px.bar(df_bar_data, x='province', y='จำนวนเคส', color=group_col, 
-                             text='จำนวนเคส', color_discrete_map=risk_colors, barmode='group')
+            fig_bar = px.bar(df_bar_data, 
+                             x='province', 
+                             y='จำนวนเคส', 
+                             color=group_col, 
+                             text='จำนวนเคส', 
+                             color_discrete_map=risk_colors,
+                             barmode='group')
         else:
             st.subheader("แยกตามเขตสุขภาพทั้งหมด")
             df_bar_data = df_bar_clean.groupby('regional').size().reset_index(name='จำนวนเคส')
             
-            # สร้างกราฟและกำหนดลำดับแกน X (category_orders)
-            fig_bar = px.bar(df_bar_data, x='regional', y='จำนวนเคส', text='จำนวนเคส', 
-                             color='จำนวนเคส', color_continuous_scale='Teal',
-                             category_orders={'regional': correct_order}) # <--- สั่งให้เรียง 1-13 ที่ตรงนี้
-
+            fig_bar = px.bar(df_bar_data, 
+                             x='regional', 
+                             y='จำนวนเคส', 
+                             text='จำนวนเคส', 
+                             color='จำนวนเคส', 
+                             color_continuous_scale='Teal')
+        
         # ปรับแต่ง Layout และเอาคำว่า Regional / Province ออก
         fig_bar.update_layout(
             font_family="Kanit", 
@@ -277,7 +283,7 @@ def main():
             margin=dict(t=20, b=20, l=0, r=0)
         )
         
-        # ลบชื่อหัวข้อแกน X และ Y
+        # คำสั่งลบชื่อแกน X และ Y
         fig_bar.update_xaxes(title_text="") 
         fig_bar.update_yaxes(title_text="")
         
@@ -303,8 +309,4 @@ def main():
     st.dataframe(df_display_final, use_container_width=True, height=400)
 
 if __name__ == "__main__":
-
     main()
-
-
-
