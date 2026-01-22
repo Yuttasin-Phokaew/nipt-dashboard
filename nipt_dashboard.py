@@ -6,7 +6,15 @@ import plotly.express as px
 from google.oauth2.service_account import Credentials
 from gspread.exceptions import WorksheetNotFound, APIError
 import re 
+import json
 
+if "gcp_service_account" in st.secrets:
+    # รันบน Cloud
+    creds_info = st.secrets["gcp_service_account"]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+else:
+    # รันบนเครื่อง (Local)
+    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
 # --- 1. การตั้งค่าข้อมูลและการเชื่อมต่อ (Configuration) ---
 SPREADSHEET_ID = '1VNblxx_MoETV5eynsIDtx22-y9OvXsYQ-2uFsq62U8M'
 SHEET_NAME = 'DashBoard' 
@@ -296,4 +304,5 @@ def main():
     st.dataframe(df_display_final, use_container_width=True, height=400)
 
 if __name__ == "__main__":
+
     main()
