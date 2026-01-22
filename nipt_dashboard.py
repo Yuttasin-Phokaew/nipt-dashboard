@@ -53,7 +53,6 @@ def load_data():
         # ตรวจสอบชื่อใน st.secrets ให้ตรงกับหัวข้อในเมนู Secrets
         if "gcp_service_account" in st.secrets:
             creds_info = st.secrets["gcp_service_account"]
-            # ใช้ from_service_account_info (สำหรับข้อมูลที่เป็น Dictionary)
             creds = Credentials.from_service_account_info(creds_info, scopes=scope)
         else:
             # สำหรับรันในเครื่องตัวเอง
@@ -306,5 +305,6 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
