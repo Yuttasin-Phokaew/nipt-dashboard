@@ -48,16 +48,15 @@ def clean_and_map_lab_results(result):
 @st.cache_data(ttl=600)
 def load_data():
     try:
-        # กำหนด scope ให้ชัดเจนภายในฟังก์ชัน
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         
-        # ตรวจสอบการเชื่อมต่อ: ใช้ Secrets บน Cloud หรือใช้ไฟล์ JSON บนเครื่อง
+        # ตรวจสอบชื่อใน st.secrets ให้ตรงกับหัวข้อในเมนู Secrets
         if "gcp_service_account" in st.secrets:
-            # ดึงข้อมูลจาก Streamlit Secrets (ต้องไปใส่ในหน้าเว็บก่อน)
             creds_info = st.secrets["gcp_service_account"]
+            # ใช้ from_service_account_info (สำหรับข้อมูลที่เป็น Dictionary)
             creds = Credentials.from_service_account_info(creds_info, scopes=scope)
         else:
-            # ใช้ไฟล์ในเครื่องสำหรับ Test
+            # สำหรับรันในเครื่องตัวเอง
             creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
             
         gc = gspread.authorize(creds)
@@ -307,4 +306,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
