@@ -8,25 +8,17 @@ from gspread.exceptions import WorksheetNotFound, APIError
 import re 
 import json
 
-if "gcp_service_account" in st.secrets:
-    # รันบน Cloud
-    creds_info = st.secrets["gcp_service_account"]
-    creds = Credentials.from_service_account_info(creds_info, scopes=scope)
-else:
-    # รันบนเครื่อง (Local)
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
 # --- 1. การตั้งค่าข้อมูลและการเชื่อมต่อ (Configuration) ---
 SPREADSHEET_ID = '1VNblxx_MoETV5eynsIDtx22-y9OvXsYQ-2uFsq62U8M'
 SHEET_NAME = 'DashBoard' 
 CREDENTIALS_FILE = 'google_sheet_credentials.json'
 
-REGIONAL_ORDER_1_13 = [f'เขตสุขภาพที่ {i}' for i in range(1, 13)]
+REGIONAL_ORDER_1_13 = [f'เขตสุขภาพที่ {i}' for i in range(1, 14)] # แก้เป็น 14 เพื่อให้ครอบคลุมถึงเขต 13
 REGIONAL_ORDER_1_13.append('ส่วนกลาง/อื่นๆ')
 
 # --- 2. ฟังก์ชันจัดการข้อมูล (Data Processing) ---
 CHROMOSOME_GROUPS = ['T13', 'T18', 'T21', 'XO', 'XXX', 'XXY', 'XYY']
 NON_CHROMOSOME_GROUPS = ['Low risk', 'Re-sampling', 'Re-library', 'No Call']
-ALL_PRIMARY_GROUPS = CHROMOSOME_GROUPS + NON_CHROMOSOME_GROUPS
 
 def map_risk_category(result):
     result_lower = str(result).lower().strip()
@@ -51,13 +43,23 @@ def clean_and_map_lab_results(result):
     risk_cat = map_risk_category(result_upper)
     if risk_cat in NON_CHROMOSOME_GROUPS:
         return risk_cat
-    return 'Other (Detailed)'
+    return 'Other'
 
 @st.cache_data(ttl=600)
 def load_data():
     try:
+        # กำหนด scope ให้ชัดเจนภายในฟังก์ชัน
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
+        
+        # ตรวจสอบการเชื่อมต่อ: ใช้ Secrets บน Cloud หรือใช้ไฟล์ JSON บนเครื่อง
+        if "gcp_service_account" in st.secrets:
+            # ดึงข้อมูลจาก Streamlit Secrets (ต้องไปใส่ในหน้าเว็บก่อน)
+            creds_info = st.secrets["gcp_service_account"]
+            creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+        else:
+            # ใช้ไฟล์ในเครื่องสำหรับ Test
+            creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scope)
+            
         gc = gspread.authorize(creds)
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
         worksheet = spreadsheet.worksheet(SHEET_NAME)
@@ -67,11 +69,10 @@ def load_data():
         df = pd.DataFrame(data)
         df.columns = ['lab_no', 'institute', 'province', 'regional', 'lab_results']
         
-        # ลบช่องว่าง และกรองแถวที่ไม่สมบูรณ์ออกทันที
+        # ลบช่องว่าง และกรองแถวที่ไม่ต้องการออกเพื่อให้ Dropdown สะอาด
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
             
-        # กรองค่าที่เป็นช่องว่าง หรือคำว่า undefined/ไม่พบเขตสุขภาพ ออกจาก Dropdown และกราฟ
         invalid_vals = ['', 'nan', 'None', 'undefined', 'ไม่พบเขตสุขภาพ']
         df = df[~df['regional'].isin(invalid_vals)]
         df = df[~df['lab_results'].isin(invalid_vals)]
@@ -81,7 +82,7 @@ def load_data():
         
         return df
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.error(f"❌ การเชื่อมต่อล้มเหลว: {e}")
         return pd.DataFrame()
 
 def set_styles():
@@ -306,3 +307,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
